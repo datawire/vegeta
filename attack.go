@@ -51,6 +51,7 @@ func attackCmd() command {
 	fs.Var(&opts.laddr, "laddr", "Local IP address")
 	fs.BoolVar(&opts.keepalive, "keepalive", true, "Use persistent connections")
 	fs.StringVar(&opts.unixSocket, "unix-socket", "", "Connect over a unix socket. This overrides the host address in target URLs")
+	fs.StringVar(&opts.respf, "respf", "", "Dump responses to file")
 	systemSpecificFlags(fs, opts)
 
 	return command{fs, func(args []string) error {
@@ -90,6 +91,7 @@ type attackOpts struct {
 	keepalive   bool
 	resolvers   csl
 	unixSocket  string
+	respf       string
 }
 
 // attack validates the attack arguments, sets up the
@@ -175,6 +177,11 @@ func attack(opts *attackOpts) (err error) {
 		vegeta.MaxBody(opts.maxBody),
 		vegeta.UnixSocket(opts.unixSocket),
 	)
+
+	if opts.respf != "" {
+		vegeta.RespondTo(opts.respf)(atk)
+		defer atk.WaitDumpResp()
+	}
 
 	res := atk.Attack(tr, opts.rate, opts.duration, opts.name)
 	enc := vegeta.NewEncoder(out)

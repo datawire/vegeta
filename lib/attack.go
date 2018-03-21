@@ -1,14 +1,17 @@
 package vegeta
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"fmt"
 	"io"
 	"io/ioutil"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"sync"
 	"time"
 
@@ -26,6 +29,7 @@ type Attacker struct {
 	seqmu     sync.Mutex
 	seq       uint64
 	began     time.Time
+	respf     string
 }
 
 const (
@@ -52,6 +56,12 @@ var (
 	DefaultLocalAddr = net.IPAddr{IP: net.IPv4zero}
 	// DefaultTLSConfig is the default tls.Config an Attacker uses.
 	DefaultTLSConfig = &tls.Config{InsecureSkipVerify: true}
+)
+
+var (
+	dumpers     sync.WaitGroup
+	memBuf      bytes.Buffer
+	memBufMutex sync.Mutex
 )
 
 // NewAttacker returns a new Attacker with default options which are overridden
@@ -86,6 +96,10 @@ func NewAttacker(opts ...func(*Attacker)) *Attacker {
 	}
 
 	return a
+}
+
+func RespondTo(rf string) func(*Attacker) {
+	return func(a *Attacker) { a.respf = rf }
 }
 
 // Workers returns a functional option which sets the initial number of workers
@@ -284,6 +298,21 @@ func (a *Attacker) Stop() {
 	}
 }
 
+// WaitDumpResp waits until all response dumpings are done
+func (a *Attacker) WaitDumpResp() {
+	dumpers.Wait()
+
+	f, err := os.OpenFile(a.respf, os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Fatalln("Fatal when opening file:", err)
+	}
+	defer f.Close()
+
+	if _, err := f.Write(memBuf.Bytes()); err != nil {
+		log.Fatalln("Fatal when writing to file:", err)
+	}
+}
+
 func (a *Attacker) attack(tr Targeter, name string, workers *sync.WaitGroup, ticks <-chan uint64, results chan<- *Result) {
 	defer workers.Done()
 	for range ticks {
@@ -326,19 +355,37 @@ func (a *Attacker) hit(tr Targeter, name string) *Result {
 	}
 	defer r.Body.Close()
 
-	body := io.Reader(r.Body)
-	if a.maxBody >= 0 {
-		body = io.LimitReader(r.Body, a.maxBody)
-	}
+	if a.respf == "" {
+		body := io.Reader(r.Body)
+		if a.maxBody >= 0 {
+			body = io.LimitReader(r.Body, a.maxBody)
+		}
 
-	if res.Body, err = ioutil.ReadAll(body); err != nil {
-		return &res
-	} else if _, err = io.Copy(ioutil.Discard, r.Body); err != nil {
-		return &res
-	}
+		if res.Body, err = ioutil.ReadAll(body); err != nil {
+			return &res
+		} else if _, err = io.Copy(ioutil.Discard, r.Body); err != nil {
+			return &res
+		}
 
-	res.Latency = time.Since(res.Timestamp)
-	res.BytesIn = uint64(len(res.Body))
+		res.Latency = time.Since(res.Timestamp)
+		res.BytesIn = uint64(len(res.Body))
+	} else {
+		buf := &bytes.Buffer{}
+		in, err := io.Copy(buf, r.Body)
+		if err != nil {
+			return &res
+		}
+		res.BytesIn = uint64(in)
+
+		dumpers.Add(1)
+		go func(b *bytes.Buffer) {
+			defer dumpers.Done()
+			memBufMutex.Lock()
+			defer memBufMutex.Unlock()
+			memBuf.Write(b.Bytes())
+			memBuf.WriteString("\r\n\r\n")
+		}(buf)
+	}
 
 	if req.ContentLength != -1 {
 		res.BytesOut = uint64(req.ContentLength)
