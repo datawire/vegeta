@@ -272,6 +272,14 @@ func (a *Attacker) Stop() {
 	}
 }
 
+// CloseIdleConnections closes any connections on its underlying
+// http.Transport which were previously connected from previous
+// requests but are now sitting idle in a "keep-alive" state. It does
+// not interrupt any connections currently in use.
+func (a *Attacker) CloseIdleConnections() {
+	a.client.CloseIdleConnections()
+}
+
 func (a *Attacker) attack(tr Targeter, name string, workers *sync.WaitGroup, ticks <-chan uint64, results chan<- *Result) {
 	defer workers.Done()
 	for range ticks {
