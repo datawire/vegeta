@@ -7,6 +7,7 @@ import (
 	"encoding/csv"
 	"encoding/gob"
 	"io"
+	"net/http"
 	"sort"
 	"strconv"
 	"time"
@@ -29,6 +30,7 @@ type Result struct {
 	BytesOut  uint64        `json:"bytes_out"`
 	BytesIn   uint64        `json:"bytes_in"`
 	Error     string        `json:"error"`
+	Header    http.Header   `json:"header"`
 	Body      []byte        `json:"body"`
 }
 
