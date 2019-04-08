@@ -227,6 +227,11 @@ func (r Rate) IsZero() bool {
 // runs until Stop is called. Results are sent to the returned channel as soon
 // as they arrive and will have their Attack field set to the given name.
 func (a *Attacker) Attack(tr Targeter, r Rate, du time.Duration, name string) <-chan *Result {
+	select {
+	case <-a.stopch:
+		a.stopch =  make(chan struct{})
+	default:
+	}
 	var workers sync.WaitGroup
 	results := make(chan *Result)
 	ticks := make(chan uint64)
